@@ -13,6 +13,11 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=8, max_length=72)
 
 
+class ConfirmationPending(BaseModel):
+    confirmation_required: bool = True
+    message: str = "Check your email to confirm registration before signing in."
+
+
 class AuthSession(BaseModel):
     access_token: str
     refresh_token: str | None = None

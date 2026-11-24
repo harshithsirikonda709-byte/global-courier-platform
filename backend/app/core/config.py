@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -11,6 +12,8 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_anon_key: str = ""
     supabase_jwt_secret: str = ""
+    supabase_jwt_algorithm: Literal["ES256", "RS256", "HS256"] = "ES256"
+    cors_allowed_origins: list[str] = ["http://localhost:3000"]
     environment: str = "development"
 
     @property

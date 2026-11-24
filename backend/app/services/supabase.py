@@ -31,16 +31,16 @@ class SupabaseClient:
     async def sign_in(self, email: str, password: str) -> dict[str, Any]:
         return await self._request("POST", "/auth/v1/token?grant_type=password", {"email": email, "password": password})
 
-    async def profile(self, access_token: str) -> dict[str, Any] | None:
-        rows = await self._request("GET", "/rest/v1/customer_profiles?select=*&limit=1", None, access_token)
+    async def profile(self, access_token: str, user_id: str) -> dict[str, Any] | None:
+        rows = await self._request("GET", f"/rest/v1/customer_profiles?user_id=eq.{user_id}&select=*", None, access_token)
         return rows[0] if rows else None
 
-    async def upsert_profile(self, access_token: str, values: dict[str, Any]) -> dict[str, Any]:
+    async def update_profile(self, access_token: str, user_id: str, values: dict[str, Any]) -> dict[str, Any] | None:
         rows = await self._request(
-            "POST", "/rest/v1/customer_profiles?on_conflict=user_id", [values], access_token,
-            {"Prefer": "resolution=merge-duplicates,return=representation"},
+            "PATCH", f"/rest/v1/customer_profiles?user_id=eq.{user_id}", values, access_token,
+            {"Prefer": "return=representation"},
         )
-        return rows[0]
+        return rows[0] if rows else None
 
     async def _request(self, method: str, path: str, body: Any, access_token: str | None = None,
                        extra_headers: dict[str, str] | None = None) -> Any:

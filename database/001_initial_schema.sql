@@ -1,4 +1,6 @@
 -- Execute this in Supabase SQL Editor. auth.users is managed by Supabase Auth.
+begin;
+
 create table if not exists public.customer_profiles (
   user_id uuid primary key references auth.users(id) on delete cascade,
   email text not null,
@@ -21,7 +23,7 @@ alter table public.customer_profiles enable row level security;
 create or replace function public.create_customer_profile()
 returns trigger
 language plpgsql
-security definer set search_path = public
+security definer set search_path = ''
 as $$
 begin
   insert into public.customer_profiles (user_id, email, full_name, phone)
@@ -38,15 +40,27 @@ $$;
 drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
-  for each row execute procedure public.create_customer_profile();
+  for each row when (new.email is not null) execute procedure public.create_customer_profile();
+
+insert into public.customer_profiles (user_id, email, full_name, phone)
+select id, email, coalesce(raw_user_meta_data ->> 'full_name', split_part(email, '@', 1)),
+       raw_user_meta_data ->> 'phone'
+from auth.users where email is not null
+on conflict (user_id) do nothing;
+
+revoke all on public.customer_profiles from public, anon, authenticated;
+grant select on public.customer_profiles to authenticated;
+grant update (full_name, phone, address_line_1, address_line_2, city, state, postal_code, country)
+  on public.customer_profiles to authenticated;
+revoke all on function public.create_customer_profile() from public, anon, authenticated;
+
+drop policy if exists "Customers read their own profile" on public.customer_profiles;
+drop policy if exists "Customers create their own profile" on public.customer_profiles;
+drop policy if exists "Customers update their own profile" on public.customer_profiles;
 
 create policy "Customers read their own profile" on public.customer_profiles
-  for select using (auth.uid() = user_id);
-create policy "Customers create their own profile" on public.customer_profiles
-  for insert with check (auth.uid() = user_id);
+  for select to authenticated using (auth.uid() = user_id);
 create policy "Customers update their own profile" on public.customer_profiles
-  for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+  for update to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
--- Planned core entities: bookings, parcels, pickup_addresses, drivers,
--- driver_assignments, shipment_events, payments and documents.
-
+commit;

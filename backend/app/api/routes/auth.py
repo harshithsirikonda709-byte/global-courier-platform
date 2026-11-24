@@ -1,7 +1,9 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Response, status
+
+from fastapi.responses import JSONResponse
 
 from app.core.config import get_settings
-from app.schemas.auth import AuthSession, LoginRequest, RegisterRequest
+from app.schemas.auth import AuthSession, ConfirmationPending, LoginRequest, RegisterRequest
 from app.services.supabase import SupabaseClient, SupabaseError
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -15,12 +17,13 @@ def session_from(payload: dict) -> AuthSession:
     )
 
 
-@router.post("/register", response_model=AuthSession, status_code=status.HTTP_201_CREATED)
-async def register(data: RegisterRequest) -> AuthSession:
+@router.post("/register", response_model=AuthSession, status_code=status.HTTP_201_CREATED,
+             responses={202: {"model": ConfirmationPending}})
+async def register(data: RegisterRequest) -> AuthSession | Response:
     try:
         payload = await SupabaseClient(get_settings()).sign_up(data.email, data.password, {"full_name": data.full_name, "phone": data.phone})
         if not payload.get("access_token"):
-            raise HTTPException(status_code=202, detail="Registration created. Confirm your email before signing in.")
+            return JSONResponse(status_code=202, content=ConfirmationPending().model_dump())
         return session_from(payload)
     except SupabaseError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
