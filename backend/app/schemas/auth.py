@@ -16,6 +16,8 @@ class LoginRequest(BaseModel):
 class ConfirmationPending(BaseModel):
     confirmation_required: bool = True
     message: str = "Check your email to confirm registration before signing in."
+    user_id: str | None = None
+    email: str | None = None
 
 
 class AuthSession(BaseModel):
@@ -24,4 +26,3 @@ class AuthSession(BaseModel):
     token_type: str = "bearer"
     expires_in: int | None = None
     user_id: str
-

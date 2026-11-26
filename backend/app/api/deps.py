@@ -2,6 +2,7 @@ from functools import lru_cache
 from uuid import UUID
 
 from fastapi import HTTPException, Request
+import jwt
 from jwt import InvalidTokenError, PyJWKClient, decode
 from jwt.exceptions import PyJWKClientConnectionError, PyJWKClientError
 
@@ -13,26 +14,61 @@ def project_keys(issuer: str) -> PyJWKClient:
     return PyJWKClient(f"{issuer}/.well-known/jwks.json", timeout=5)
 
 
-def current_user_id(request: Request) -> str:
-    token = bearer_token(request)
-    settings = get_settings()
-    issuer = settings.supabase_url.rstrip("/") + "/auth/v1"
-    algorithm = settings.supabase_jwt_algorithm
-    if not settings.supabase_url or (algorithm == "HS256" and not settings.supabase_jwt_secret):
-        raise HTTPException(status_code=503, detail="JWT validation is not configured")
-    try:
-        key = settings.supabase_jwt_secret if algorithm == "HS256" else project_keys(issuer).get_signing_key_from_jwt(token).key
-        claims = decode(token, key, algorithms=[algorithm], audience="authenticated", issuer=issuer,
-                        options={"require": ["iss", "aud", "exp", "sub"]})
-        return str(UUID(claims["sub"]))
-    except PyJWKClientConnectionError:
-        raise HTTPException(status_code=503, detail="Supabase signing keys are unavailable")
-    except (InvalidTokenError, PyJWKClientError, ValueError, TypeError, AttributeError):
-        raise HTTPException(status_code=401, detail="Invalid or expired access token")
-
-
-def bearer_token(request: Request) -> str:
+async def bearer_token(request: Request) -> str:
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Bearer token required")
     return auth[7:]
+
+
+async def current_user_id(request: Request) -> str:
+    token = await bearer_token(request)
+    settings = get_settings()
+
+    if not settings.supabase_url:
+        raise HTTPException(status_code=503, detail="JWT validation is not configured")
+
+    issuer = settings.supabase_url.rstrip("/") + "/auth/v1"
+    configured_algorithm = settings.supabase_jwt_algorithm
+
+    try:
+        header = jwt.get_unverified_header(token)
+        token_alg = header.get("alg")
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or expired access token")
+
+    # Determine allowed algorithms
+    if configured_algorithm == "AUTO":
+        allowed_algorithms = ["HS256", "ES256", "RS256"]
+    else:
+        allowed_algorithms = [configured_algorithm]
+
+    if token_alg not in allowed_algorithms:
+        raise HTTPException(status_code=401, detail="Invalid or expired access token")
+
+    if token_alg == "HS256":
+        if not settings.supabase_jwt_secret:
+            raise HTTPException(status_code=503, detail="JWT validation is not configured")
+        key = settings.supabase_jwt_secret
+    elif token_alg in ("ES256", "RS256"):
+        try:
+            key = project_keys(issuer).get_signing_key_from_jwt(token).key
+        except PyJWKClientConnectionError:
+            raise HTTPException(status_code=503, detail="Supabase signing keys are unavailable")
+        except PyJWKClientError:
+            raise HTTPException(status_code=401, detail="Invalid or expired access token")
+    else:
+        raise HTTPException(status_code=401, detail="Invalid or expired access token")
+
+    try:
+        claims = decode(
+            token,
+            key,
+            algorithms=[token_alg],
+            audience="authenticated",
+            issuer=issuer,
+            options={"require": ["iss", "aud", "exp", "sub"]},
+        )
+        return str(UUID(claims["sub"]))
+    except (InvalidTokenError, ValueError, TypeError, AttributeError):
+        raise HTTPException(status_code=401, detail="Invalid or expired access token")
