@@ -18,7 +18,10 @@ async def bearer_token(request: Request) -> str:
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Bearer token required")
-    return auth[7:]
+    token = auth[7:].strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Bearer token required")
+    return token
 
 
 async def current_user_id(request: Request) -> str:
@@ -35,6 +38,9 @@ async def current_user_id(request: Request) -> str:
         header = jwt.get_unverified_header(token)
         token_alg = header.get("alg")
     except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or expired access token")
+
+    if not token_alg:
         raise HTTPException(status_code=401, detail="Invalid or expired access token")
 
     # Determine allowed algorithms
@@ -55,7 +61,7 @@ async def current_user_id(request: Request) -> str:
             key = project_keys(issuer).get_signing_key_from_jwt(token).key
         except PyJWKClientConnectionError:
             raise HTTPException(status_code=503, detail="Supabase signing keys are unavailable")
-        except PyJWKClientError:
+        except (PyJWKClientError, InvalidTokenError, KeyError, ValueError, AttributeError):
             raise HTTPException(status_code=401, detail="Invalid or expired access token")
     else:
         raise HTTPException(status_code=401, detail="Invalid or expired access token")

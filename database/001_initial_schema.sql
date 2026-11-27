@@ -20,6 +20,7 @@ alter table public.customer_profiles enable row level security;
 
 -- Keep the public profile in sync with each new Supabase Auth customer.
 -- SECURITY DEFINER is required because the trigger writes across schemas.
+-- Uses ON CONFLICT (user_id) DO NOTHING to ensure existing profile records are never overwritten.
 create or replace function public.create_customer_profile()
 returns trigger
 language plpgsql
@@ -33,10 +34,7 @@ begin
     coalesce(new.raw_user_meta_data ->> 'full_name', split_part(new.email, '@', 1)),
     new.raw_user_meta_data ->> 'phone'
   )
-  on conflict (user_id) do update set
-    email = excluded.email,
-    full_name = coalesce(excluded.full_name, public.customer_profiles.full_name),
-    phone = coalesce(excluded.phone, public.customer_profiles.phone);
+  on conflict (user_id) do nothing;
   return new;
 end;
 $$;
@@ -46,7 +44,8 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row when (new.email is not null) execute procedure public.create_customer_profile();
 
--- Backfill any existing auth users without profile records
+-- Backfill any existing auth users without profile records.
+-- ON CONFLICT (user_id) DO NOTHING prevents overwriting existing customer profiles.
 insert into public.customer_profiles (user_id, email, full_name, phone)
 select id, email, coalesce(raw_user_meta_data ->> 'full_name', split_part(email, '@', 1)),
        raw_user_meta_data ->> 'phone'

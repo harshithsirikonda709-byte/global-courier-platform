@@ -1,28 +1,13 @@
-import sys
 import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
-if sys.platform == "win32":
-    import asyncio
-    import signal
-    from unittest.mock import MagicMock
-
-    try:
-        asyncio.proactor_events.BaseProactorEventLoop._make_self_pipe = (
-            lambda self: (setattr(self, "_ssock", MagicMock()), setattr(self, "_csock", MagicMock()))
-        )
-        asyncio.proactor_events.BaseProactorEventLoop._close_self_pipe = lambda self: None
-        asyncio.proactor_events.BaseProactorEventLoop._loop_self_reading = lambda self, f=None: None
-        signal.set_wakeup_fd = lambda fd, *, warn_on_full_buffer=True: -1
-    except Exception:
-        pass
-
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 import httpx
 import jwt
+from jwt.exceptions import PyJWKClientConnectionError, PyJWKClientError
 
 from app.core.config import Settings
 from app.main import app
@@ -96,7 +81,6 @@ class AuthProfileTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_register_confirmation_pending(self):
         data = {**self.login_payload, "full_name": "Customer A", "phone": "+919876543210"}
-        # Supabase returns user data without an access token when email confirmation is required
         self.request.return_value = {"id": self.uid_customer_a, "email": data["email"]}
         response = await self.client.post("/api/v1/auth/register", json=data)
         self.assertEqual(response.status_code, 202)
@@ -115,12 +99,26 @@ class AuthProfileTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("User already registered", response.json()["detail"])
 
     async def test_register_validation_error(self):
-        # Password too short (<8 chars)
         response = await self.client.post(
             "/api/v1/auth/register",
             json={"email": "bad@example.com", "password": "short", "full_name": "A"},
         )
         self.assertEqual(response.status_code, 422)
+
+    async def test_register_unexpected_payload_error(self):
+        data = {**self.login_payload, "full_name": "Customer A"}
+
+        # Non-dict payload returned
+        self.request.return_value = ["not", "a", "dict"]
+        response = await self.client.post("/api/v1/auth/register", json=data)
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("Unexpected response", response.json()["detail"])
+
+        # When access_token is present but user structure is missing/malformed
+        self.request.return_value = {"access_token": "token-without-user"}
+        response = await self.client.post("/api/v1/auth/register", json=data)
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("Malformed session payload", response.json()["detail"])
 
     # 2. Login tests
     async def test_login_success(self):
@@ -139,6 +137,18 @@ class AuthProfileTests(unittest.IsolatedAsyncioTestCase):
     async def test_login_validation_error(self):
         response = await self.client.post("/api/v1/auth/login", json={"email": "not-an-email", "password": "123"})
         self.assertEqual(response.status_code, 422)
+
+    async def test_login_unexpected_payload_error(self):
+        # Non-dict payload from Supabase
+        self.request.return_value = None
+        response = await self.client.post("/api/v1/auth/login", json=self.login_payload)
+        self.assertEqual(response.status_code, 502)
+
+        # Missing required token or user_id in payload
+        self.request.return_value = {"invalid": "payload"}
+        response = await self.client.post("/api/v1/auth/login", json=self.login_payload)
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("Malformed session payload", response.json()["detail"])
 
     # 3. Profile retrieval and update tests
     async def test_get_my_profile_success(self):
@@ -182,35 +192,27 @@ class AuthProfileTests(unittest.IsolatedAsyncioTestCase):
 
     # 4. Customer isolation test (one customer cannot access or modify another customer's profile)
     async def test_customer_cannot_access_other_customer_profile(self):
-        """Proves customer A cannot read or modify customer B's profile.
-
-        The API binds customer identity strictly to the cryptographically verified JWT 'sub' claim.
-        Customer A's token cannot query or mutate Customer B's profile.
-        """
         self.request.return_value = [self.profile_a]
         response = await self.client.get("/api/v1/customers/me", headers=self.headers_a)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["user_id"], self.uid_customer_a)
 
-        # Verify that Supabase was queried for customer A's ID, NEVER customer B's ID
         called_args = self.request.call_args_list[-1]
         self.assertIn(f"user_id=eq.{self.uid_customer_a}", called_args[0][1])
         self.assertNotIn(self.uid_customer_b, called_args[0][1])
 
-        # If Customer A attempts to spoof Customer B's identity with an invalid signature, it is rejected with 401
         forged_claims = {
             "sub": self.uid_customer_b,
             "aud": "authenticated",
             "exp": int(time.time()) + 300,
             "iss": "https://test.example/auth/v1",
         }
-        forged_token = jwt.encode(forged_claims, "wrong-secret-key-attacker", algorithm="HS256")
+        forged_token = jwt.encode(forged_claims, "wrong-secret-key-attacker-32bytes!", algorithm="HS256")
         forged_response = await self.client.get(
             "/api/v1/customers/me", headers={"Authorization": f"Bearer {forged_token}"}
         )
         self.assertEqual(forged_response.status_code, 401)
 
-        # If Customer A tries to update profile, Customer B's row is not touched
         update_data = {"full_name": "Customer A Updated"}
         self.request.return_value = [{**self.profile_a, **update_data}]
         update_response = await self.client.put("/api/v1/customers/me", headers=self.headers_a, json=update_data)
@@ -219,7 +221,7 @@ class AuthProfileTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(f"user_id=eq.{self.uid_customer_a}", update_called_args[0][1])
         self.assertNotIn(self.uid_customer_b, update_called_args[0][1])
 
-    # 5. JWT Validation tests (issuer, audience, expiry, sub, algorithms)
+    # 5. JWT Validation tests (claims, algorithms, JWKS errors, missing kid, malformed tokens, AUTO mode)
     async def test_jwt_claims_validation(self):
         test_cases = [
             ({"iss": "https://wrong-issuer.com/auth/v1"}, "wrong issuer"),
@@ -233,7 +235,6 @@ class AuthProfileTests(unittest.IsolatedAsyncioTestCase):
             res = await self.client.get("/api/v1/customers/me", headers={"Authorization": f"Bearer {token}"})
             self.assertEqual(res.status_code, 401, f"Failed on: {desc}")
 
-        # Missing exp
         claims_no_exp = {k: v for k, v in self.claims_a.items() if k != "exp"}
         token_no_exp = jwt.encode(claims_no_exp, self.settings.supabase_jwt_secret, algorithm="HS256")
         res = await self.client.get("/api/v1/customers/me", headers={"Authorization": f"Bearer {token_no_exp}"})
@@ -242,7 +243,6 @@ class AuthProfileTests(unittest.IsolatedAsyncioTestCase):
     async def test_jwt_signing_algorithms(self):
         self.request.return_value = [self.profile_a]
 
-        # Test ES256 and RS256 with project keys
         for algorithm, key in (
             ("ES256", ec.generate_private_key(ec.SECP256R1())),
             ("RS256", rsa.generate_private_key(public_exponent=65537, key_size=2048)),
@@ -255,11 +255,64 @@ class AuthProfileTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status_code, 200)
                 mock_keys.assert_called_once_with(self.claims_a["iss"])
 
-        # Test mismatched algorithm: token signed with HS256 but configured with ES256
         self.settings.supabase_jwt_algorithm = "ES256"
         token_hs = jwt.encode(self.claims_a, "secret" * 8, algorithm="HS256")
         res = await self.client.get("/api/v1/customers/me", headers={"Authorization": f"Bearer {token_hs}"})
         self.assertEqual(res.status_code, 401)
+
+    async def test_jwt_jwks_failure_and_missing_key(self):
+        self.settings.supabase_jwt_algorithm = "ES256"
+        key = ec.generate_private_key(ec.SECP256R1())
+        token = jwt.encode(self.claims_a, key, algorithm="ES256", headers={"kid": "unknown-kid"})
+
+        # JWKS connection error -> 503
+        with patch("app.api.deps.project_keys") as mock_keys:
+            mock_keys.return_value.get_signing_key_from_jwt.side_effect = PyJWKClientConnectionError("Network error")
+            response = await self.client.get("/api/v1/customers/me", headers={"Authorization": f"Bearer {token}"})
+            self.assertEqual(response.status_code, 503)
+            self.assertIn("Supabase signing keys are unavailable", response.json()["detail"])
+
+        # Invalid or missing key ID (PyJWKClientError) -> 401
+        with patch("app.api.deps.project_keys") as mock_keys:
+            mock_keys.return_value.get_signing_key_from_jwt.side_effect = PyJWKClientError("Key ID not found")
+            response = await self.client.get("/api/v1/customers/me", headers={"Authorization": f"Bearer {token}"})
+            self.assertEqual(response.status_code, 401)
+            self.assertIn("Invalid or expired access token", response.json()["detail"])
+
+    async def test_malformed_bearer_tokens(self):
+        malformed_headers = [
+            {},                                         # No Authorization header
+            {"Authorization": "Basic dXNlcjpwYXNz"},    # Basic auth instead of Bearer
+            {"Authorization": "Bearer"},                # Bearer with no space
+            {"Authorization": "Bearer   "},             # Bearer with only whitespace
+            {"Authorization": "Bearer not-a-jwt"},      # Invalid JWT format
+            {"Authorization": "Bearer abc.def"},        # Truncated token (2 segments)
+        ]
+        for headers in malformed_headers:
+            response = await self.client.get("/api/v1/customers/me", headers=headers)
+            self.assertEqual(response.status_code, 401)
+
+    async def test_auto_algorithm_mode(self):
+        self.settings.supabase_jwt_algorithm = "AUTO"
+        self.request.return_value = [self.profile_a]
+
+        # 1. AUTO accepts valid HS256 token
+        token_hs = jwt.encode(self.claims_a, self.settings.supabase_jwt_secret, algorithm="HS256")
+        res_hs = await self.client.get("/api/v1/customers/me", headers={"Authorization": f"Bearer {token_hs}"})
+        self.assertEqual(res_hs.status_code, 200)
+
+        # 2. AUTO accepts valid ES256 token via JWKS
+        key_ec = ec.generate_private_key(ec.SECP256R1())
+        token_es = jwt.encode(self.claims_a, key_ec, algorithm="ES256", headers={"kid": "ec-key"})
+        with patch("app.api.deps.project_keys") as mock_keys:
+            mock_keys.return_value.get_signing_key_from_jwt.return_value = SimpleNamespace(key=key_ec.public_key())
+            res_es = await self.client.get("/api/v1/customers/me", headers={"Authorization": f"Bearer {token_es}"})
+            self.assertEqual(res_es.status_code, 200)
+
+        # 3. AUTO rejects unsupported algorithm (e.g. none)
+        token_none = jwt.encode(self.claims_a, "", algorithm="none")
+        res_none = await self.client.get("/api/v1/customers/me", headers={"Authorization": f"Bearer {token_none}"})
+        self.assertEqual(res_none.status_code, 401)
 
     # 6. CORS configuration tests
     async def test_cors_configuration(self):
