@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, JSON, String, Text, Time
 from sqlalchemy.orm import relationship
 
 from .database import Base
@@ -22,11 +22,18 @@ class User(Base):
     email = Column(String(320), unique=True, nullable=False, index=True)
     phone = Column(String(32), unique=True, nullable=True)
     full_name = Column(String(160), nullable=False)
+    account_type = Column(String(32), nullable=False, default="family", server_default="family")
     account_status = Column(String(32), nullable=False, default="active")
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     family_memberships = relationship("FamilyMember", back_populates="user")
+    companion_profile = relationship(
+        "CompanionProfile",
+        back_populates="user",
+        uselist=False,
+        foreign_keys="CompanionProfile.user_id",
+    )
 
 
 class Family(Base):
@@ -180,3 +187,65 @@ class AuditLog(Base):
     entity_id = Column(String, nullable=False)
     reason = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+
+class CompanionProfile(Base):
+    __tablename__ = "companion_profiles"
+
+    id = Column(String, primary_key=True, default=uuid_string)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, unique=True, index=True)
+    display_name = Column(String(160), nullable=False)
+    bio = Column(Text, nullable=False)
+    languages = Column(JSON, nullable=False)
+    service_area = Column(String(160), nullable=False)
+    timezone_name = Column(String(80), nullable=False, default="Asia/Kolkata", server_default="Asia/Kolkata")
+    identity_document_type = Column(String(80), nullable=False)
+    identity_status = Column(String(32), nullable=False, default="pending", server_default="pending")
+    approval_status = Column(String(32), nullable=False, default="pending", server_default="pending")
+    admin_notes = Column(Text, nullable=True)
+    reviewed_by_user_id = Column(String, ForeignKey("users.id"), nullable=True)
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    user = relationship("User", back_populates="companion_profile", foreign_keys=[user_id])
+    availability = relationship("CompanionAvailability", back_populates="companion")
+
+
+class CompanionAvailability(Base):
+    __tablename__ = "companion_availability"
+
+    id = Column(String, primary_key=True, default=uuid_string)
+    companion_id = Column(String, ForeignKey("companion_profiles.id"), nullable=False, index=True)
+    weekday = Column(Integer, nullable=False)
+    start_time = Column(Time, nullable=False)
+    end_time = Column(Time, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    companion = relationship("CompanionProfile", back_populates="availability")
+
+
+class Visit(Base):
+    __tablename__ = "visits"
+
+    id = Column(String, primary_key=True, default=uuid_string)
+    family_id = Column(String, ForeignKey("families.id"), nullable=False, index=True)
+    parent_id = Column(String, ForeignKey("parent_profiles.id"), nullable=False, index=True)
+    booked_by_user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    companion_id = Column(String, ForeignKey("companion_profiles.id"), nullable=True, index=True)
+    scheduled_start = Column(DateTime(timezone=True), nullable=False, index=True)
+    duration_minutes = Column(Integer, nullable=False)
+    requirements = Column(Text, nullable=True)
+    status = Column(String(32), nullable=False, default="requested", server_default="requested", index=True)
+    rejection_reason = Column(Text, nullable=True)
+    cancellation_reason = Column(Text, nullable=True)
+    assigned_by_user_id = Column(String, ForeignKey("users.id"), nullable=True)
+    assigned_at = Column(DateTime(timezone=True), nullable=True)
+    checked_in_at = Column(DateTime(timezone=True), nullable=True)
+    checked_out_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    parent = relationship("ParentProfile")
+    family = relationship("Family")
+    companion = relationship("CompanionProfile")

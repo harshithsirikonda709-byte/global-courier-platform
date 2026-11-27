@@ -11,6 +11,7 @@ export default function RegisterPage() {
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
+  const [accountType, setAccountType] = useState<"family" | "companion" | "parent">("family");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
@@ -40,6 +41,7 @@ export default function RegisterPage() {
           email,
           phone: phone || null,
           password,
+          account_type: accountType,
         }),
       });
       if ("confirmation_required" in response) {
@@ -47,7 +49,11 @@ export default function RegisterPage() {
         return;
       }
       saveAuth(response.access_token, response.user);
-      router.replace("/family");
+      router.replace(
+        response.user.is_admin ? "/admin" :
+          response.user.account_type === "companion" ? "/companion" :
+            response.user.account_type === "parent" ? "/parent" : "/family",
+      );
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Registration failed.");
     } finally {
@@ -61,9 +67,17 @@ export default function RegisterPage() {
         <div className="cc-brand" style={{ color: "#172033", marginBottom: 12 }}>
           CARE<span style={{ color: "#3159a8" }}>CIRCLE</span>
         </div>
-        <h1 style={{ marginTop: 0 }}>Create a family account</h1>
+        <h1 style={{ marginTop: 0 }}>Create a CareCircle account</h1>
         {error ? <div className="cc-alert error" role="alert">{error}</div> : null}
         {notice ? <div className="cc-alert success" role="status">{notice}</div> : null}
+        <div className="cc-field">
+          <label htmlFor="accountType">I am registering as</label>
+          <select id="accountType" value={accountType} onChange={(event) => setAccountType(event.target.value as "family" | "companion" | "parent")}>
+            <option value="family">Family member</option>
+            <option value="parent">Parent</option>
+            <option value="companion">Companion</option>
+          </select>
+        </div>
         <div className="cc-field">
           <label htmlFor="fullName">Full name</label>
           <input id="fullName" value={fullName} onChange={(event) => setFullName(event.target.value)} autoComplete="name" />

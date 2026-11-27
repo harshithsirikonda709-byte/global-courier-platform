@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
-from .routers import auth, parents
+from .routers import auth, companions, parents, visits
 
 
 app = FastAPI(
@@ -20,6 +20,9 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(parents.router)
+app.include_router(companions.router)
+app.include_router(companions.admin_router)
+app.include_router(visits.router)
 
 
 @app.get("/health")

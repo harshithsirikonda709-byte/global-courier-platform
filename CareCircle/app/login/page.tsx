@@ -33,7 +33,11 @@ export default function LoginPage() {
         body: JSON.stringify({ email, password }),
       });
       saveAuth(response.access_token, response.user);
-      router.replace("/family");
+      router.replace(
+        response.user.is_admin ? "/admin" :
+          response.user.account_type === "companion" ? "/companion" :
+            response.user.account_type === "parent" ? "/parent" : "/family",
+      );
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Sign-in failed.");
     } finally {

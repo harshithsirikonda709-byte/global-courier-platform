@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Suspense } from "react";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, type Consent, type ParentProfile } from "@/lib/api";
 
 function ParentDetailContent() {
@@ -16,17 +16,23 @@ function ParentDetailContent() {
   const [withdrawReason, setWithdrawReason] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(async () => {
+  useEffect(() => {
+    let active = true;
+    api<ParentProfile>(`/v1/carecircle/parents/${params.id}`).then((profile) => {
+      if (active) setParent(profile);
+    }).catch((requestError: unknown) => {
+      if (active) setError(requestError instanceof Error ? requestError.message : "Unable to load parent.");
+    });
+    return () => { active = false; };
+  }, [params.id]);
+
+  async function load() {
     try {
       setParent(await api<ParentProfile>(`/v1/carecircle/parents/${params.id}`));
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to load parent.");
     }
-  }, [params.id]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  }
 
   async function recordConsent(event: React.FormEvent) {
     event.preventDefault();

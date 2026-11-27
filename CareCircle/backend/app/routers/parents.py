@@ -12,6 +12,7 @@ from ..models import (
     ParentAuthorization,
     ParentConsent,
     ParentProfile,
+    Visit,
 )
 from ..models import User
 from ..schemas import (
@@ -28,8 +29,15 @@ router = APIRouter(prefix="/api/v1/carecircle/parents", tags=["parent profiles"]
 
 
 def require_parent_access(db: Session, current_user: User, parent_id: str) -> ParentProfile:
-    membership = require_family_member(db, current_user)
+    parent = db.query(ParentProfile).filter(ParentProfile.id == parent_id).first()
+    if parent is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Parent profile not found")
+    if parent.status != "active":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Parent profile not found")
+    if parent.parent_user_id == current_user.id:
+        return parent
 
+    membership = require_family_member(db, current_user)
     parent_link = (
         db.query(FamilyParent)
         .join(ParentAuthorization, ParentAuthorization.family_member_id == membership.id)
@@ -42,12 +50,6 @@ def require_parent_access(db: Session, current_user: User, parent_id: str) -> Pa
         )
         .first()
     )
-
-    parent = db.query(ParentProfile).filter(ParentProfile.id == parent_id).first()
-    if parent is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Parent profile not found")
-    if parent.status != "active":
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Parent profile not found")
     if parent_link is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You are not authorized to access this parent")
     return parent
@@ -153,6 +155,20 @@ def create_parent(
     return parent
 
 
+@router.get("/me", response_model=ParentResponse)
+def get_my_parent_profile(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    parent = db.query(ParentProfile).filter(
+        ParentProfile.parent_user_id == current_user.id,
+        ParentProfile.status == "active",
+    ).first()
+    if parent is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No parent profile is linked to this account")
+    return parent
+
+
 @router.get("/{parent_id}", response_model=ParentResponse)
 def get_parent(
     parent_id: str,
@@ -170,22 +186,32 @@ def update_parent(
     current_user: User = Depends(get_current_user),
 ):
     parent = require_parent_access(db, current_user, parent_id)
-    membership = require_family_member(db, current_user)
-
-    authorization = (
-        db.query(ParentAuthorization)
-        .filter(
-            ParentAuthorization.parent_id == parent_id,
-            ParentAuthorization.family_member_id == membership.id,
-            ParentAuthorization.status == "active",
+    if parent.parent_user_id != current_user.id:
+        membership = require_family_member(db, current_user)
+        authorization = (
+            db.query(ParentAuthorization)
+            .filter(
+                ParentAuthorization.parent_id == parent_id,
+                ParentAuthorization.family_member_id == membership.id,
+                ParentAuthorization.status == "active",
+            )
+            .first()
         )
-        .first()
-    )
-    if authorization is None or not authorization.can_edit_profile:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Profile editing is not authorized")
+        if authorization is None or not authorization.can_edit_profile:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Profile editing is not authorized")
 
     for field_name in payload.model_fields_set:
         if field_name != "emergency_contacts" and hasattr(parent, field_name):
+            if (
+                parent.parent_user_id
+                and parent.parent_user_id != current_user.id
+                and field_name in {"preferred_language", "interests", "accessibility_preferences"}
+                and getattr(parent, field_name) != getattr(payload, field_name)
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Only the parent can change personal preferences",
+                )
             setattr(parent, field_name, getattr(payload, field_name))
 
     db.query(EmergencyContact).filter(
@@ -318,6 +344,16 @@ def withdraw_consent(
     consent.withdrawn_at = datetime.now(timezone.utc)
     consent.withdrawn_by_user_id = current_user.id
     consent.withdrawal_reason = payload.reason
+
+    if is_parent and consent.consent_source == "parent":
+        scheduled_visits = db.query(Visit).filter(
+            Visit.parent_id == parent.id,
+            Visit.status.in_(("requested", "assigned", "accepted")),
+        ).all()
+        for visit in scheduled_visits:
+            visit.status = "cancelled"
+            visit.cancellation_reason = "Parent withdrew personal consent"
+            audit(db, current_user.id, "cancel_visit_after_consent_withdrawal", "visit", visit.id)
 
     audit(
         db,

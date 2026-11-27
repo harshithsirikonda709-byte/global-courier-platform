@@ -6,7 +6,7 @@ export default function Home() {
           CARE<span style={{ color: "#3159a8" }}>CIRCLE</span>
         </div>
         <h1 style={{ marginTop: 0 }}>Trusted companionship for your parent</h1>
-        <p className="cc-muted">Manage parent profiles, consent and emergency contacts securely.</p>
+        <p className="cc-muted">Coordinate safe, non-medical companionship visits with family and trusted companions.</p>
         <div className="cc-actions" style={{ marginTop: 24 }}>
           <a className="cc-button" href="/login">Sign in</a>
           <a className="cc-button secondary" href="/register">Create account</a>

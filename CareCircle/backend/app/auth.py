@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from .config import get_settings
 from .database import get_db
-from .models import Family, FamilyMember, User
+from .models import CompanionProfile, Family, FamilyMember, User
 
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -27,6 +27,7 @@ def provision_family_user(
     email: str,
     full_name: str | None = None,
     phone: str | None = None,
+    account_type: str = "family",
 ) -> User:
     user = db.query(User).filter(User.id == user_id).first()
     if user is None:
@@ -36,6 +37,7 @@ def provision_family_user(
             email=email,
             phone=phone,
             full_name=name,
+            account_type=account_type,
             account_status="active",
         )
         db.add(user)
@@ -43,24 +45,39 @@ def provision_family_user(
     elif user.account_status != "active":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This account is inactive")
 
-    membership = db.query(FamilyMember).filter(
-        FamilyMember.user_id == user.id,
-        FamilyMember.status == "active",
-    ).first()
-    if membership is None:
-        family = Family(
-            primary_user_id=user.id,
-            name=f"{user.full_name} Family",
-            account_status="active",
-        )
-        db.add(family)
-        db.flush()
-        db.add(FamilyMember(
-            family_id=family.id,
-            user_id=user.id,
-            role="owner",
-            status="active",
-        ))
+    if user.account_type == "family":
+        membership = db.query(FamilyMember).filter(
+            FamilyMember.user_id == user.id,
+            FamilyMember.status == "active",
+        ).first()
+        if membership is None:
+            family = Family(
+                primary_user_id=user.id,
+                name=f"{user.full_name} Family",
+                account_status="active",
+            )
+            db.add(family)
+            db.flush()
+            db.add(FamilyMember(
+                family_id=family.id,
+                user_id=user.id,
+                role="owner",
+                status="active",
+            ))
+    elif user.account_type == "companion":
+        if db.query(CompanionProfile).filter(CompanionProfile.user_id == user.id).first() is None:
+            db.add(CompanionProfile(
+                user_id=user.id,
+                display_name=user.full_name,
+                bio="",
+                languages=[],
+                service_area="",
+                identity_document_type="",
+                identity_status="pending",
+                approval_status="pending",
+            ))
+    elif user.account_type != "parent":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid account type")
 
     db.commit()
     db.refresh(user)
@@ -126,16 +143,22 @@ def get_current_user(
     metadata = metadata if isinstance(metadata, dict) else {}
     full_name = metadata.get("full_name") or metadata.get("name")
     phone = metadata.get("phone")
+    account_type = metadata.get("account_type")
+    if account_type not in ("family", "companion", "parent"):
+        account_type = "family"
     return provision_family_user(
         db,
         user_id=user_id,
         email=email,
         full_name=full_name if isinstance(full_name, str) else None,
         phone=phone if isinstance(phone, str) else None,
+        account_type=account_type,
     )
 
 
 def require_family_member(db: Session, user: User) -> FamilyMember:
+    if user.account_type != "family":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="A family account is required")
     membership = db.query(FamilyMember).filter(
         FamilyMember.user_id == user.id,
         FamilyMember.status == "active",
@@ -146,3 +169,15 @@ def require_family_member(db: Session, user: User) -> FamilyMember:
             detail="A family membership is required",
         )
     return membership
+
+
+def require_companion(user: User) -> User:
+    if user.account_type != "companion":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="A companion account is required")
+    return user
+
+
+def require_admin(user: User) -> User:
+    if user.id not in get_settings().admin_user_ids:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Administrator access is required")
+    return user

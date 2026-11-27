@@ -52,6 +52,10 @@ def session_from(payload: dict) -> AuthResponse:
             full_name=str(full_name),
             email=str(email),
             phone=metadata.get("phone"),
+            account_type=metadata.get("account_type", "family")
+            if metadata.get("account_type") in ("family", "companion", "parent")
+            else "family",
+            is_admin=str(user_id) in get_settings().admin_user_ids,
         ),
     )
 
@@ -74,6 +78,9 @@ def save_platform_user(db: Session, user_data: dict, fallback_name: str | None =
         email=str(email),
         full_name=metadata.get("full_name") or metadata.get("name") or fallback_name,
         phone=metadata.get("phone"),
+        account_type=metadata.get("account_type", "family")
+        if metadata.get("account_type") in ("family", "companion", "parent")
+        else "family",
     )
 
 
@@ -88,7 +95,11 @@ async def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> A
         result = await SupabaseClient(get_settings()).sign_up(
             str(payload.email),
             payload.password,
-            {"full_name": payload.full_name, "phone": payload.phone},
+            {
+                "full_name": payload.full_name,
+                "phone": payload.phone,
+                "account_type": payload.account_type,
+            },
         )
     except SupabaseError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
@@ -139,9 +150,12 @@ async def login(payload: LoginRequest, db: Session = Depends(get_db)) -> AuthRes
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Malformed session payload received from authentication service")
 
     session.user = UserResponse.model_validate(local_user)
+    session.user.is_admin = local_user.id in get_settings().admin_user_ids
     return session
 
 
 @router.get("/me", response_model=UserResponse)
 def me(current_user: User = Depends(get_current_user)) -> UserResponse:
-    return UserResponse.model_validate(current_user)
+    response = UserResponse.model_validate(current_user)
+    response.is_admin = current_user.id in get_settings().admin_user_ids
+    return response

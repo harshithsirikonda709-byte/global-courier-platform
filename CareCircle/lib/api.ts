@@ -3,6 +3,8 @@ export type AuthUser = {
   full_name: string;
   email: string;
   phone?: string | null;
+  account_type: "family" | "companion" | "parent";
+  is_admin: boolean;
 };
 
 export type EmergencyContact = {
@@ -83,6 +85,46 @@ export type ParentInput = {
   accessibility_preferences?: string;
   relationship?: string;
   emergency_contacts: EmergencyContact[];
+};
+
+export type CompanionProfile = {
+  id: string;
+  user_id?: string;
+  display_name: string;
+  bio: string;
+  languages: string[];
+  service_area: string;
+  timezone_name: string;
+  identity_document_type: string;
+  identity_status: string;
+  approval_status: string;
+  admin_notes?: string | null;
+  email?: string;
+  phone?: string | null;
+};
+
+export type Availability = {
+  id?: string;
+  weekday: number;
+  start_time: string;
+  end_time: string;
+};
+
+export type Visit = {
+  id: string;
+  parent_id: string;
+  family_id: string;
+  booked_by_user_id: string;
+  companion_id?: string | null;
+  scheduled_start: string;
+  duration_minutes: number;
+  requirements?: string | null;
+  status: "requested" | "assigned" | "accepted" | "in_progress" | "completed" | "cancelled";
+  rejection_reason?: string | null;
+  cancellation_reason?: string | null;
+  assigned_at?: string | null;
+  checked_in_at?: string | null;
+  checked_out_at?: string | null;
 };
 
 const TOKEN_KEY = "carecircle_access_token";

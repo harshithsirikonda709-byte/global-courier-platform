@@ -1,7 +1,7 @@
-from datetime import date, datetime
-from typing import Optional
+from datetime import date, datetime, time, timezone
+from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, ValidationInfo, field_validator
 
 
 class RegisterRequest(BaseModel):
@@ -9,6 +9,7 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     phone: Optional[str] = Field(default=None, max_length=32)
     password: str = Field(min_length=8, max_length=128)
+    account_type: Literal["family", "companion", "parent"] = "family"
 
     @field_validator("full_name")
     @classmethod
@@ -31,6 +32,8 @@ class UserResponse(BaseModel):
     full_name: str
     email: str
     phone: Optional[str] = None
+    account_type: Literal["family", "companion", "parent"] = "family"
+    is_admin: bool = False
 
 
 class AuthResponse(BaseModel):
@@ -144,6 +147,140 @@ class ConsentResponse(BaseModel):
 
 class WithdrawalRequest(BaseModel):
     reason: str = Field(min_length=3, max_length=1000)
+
+
+class CompanionProfileInput(BaseModel):
+    display_name: str = Field(min_length=2, max_length=160)
+    bio: str = Field(min_length=20, max_length=2000)
+    languages: list[str] = Field(min_length=1, max_length=10)
+    service_area: str = Field(min_length=2, max_length=160)
+    timezone_name: str = Field(default="Asia/Kolkata", min_length=3, max_length=80)
+    identity_document_type: str = Field(min_length=2, max_length=80)
+
+    @field_validator("display_name", "bio", "service_area", "timezone_name", "identity_document_type")
+    @classmethod
+    def strip_companion_fields(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("This field is required")
+        return value
+
+    @field_validator("languages")
+    @classmethod
+    def validate_languages(cls, value: list[str]) -> list[str]:
+        languages = [language.strip() for language in value if language.strip()]
+        if not languages:
+            raise ValueError("At least one language is required")
+        return list(dict.fromkeys(languages))
+
+
+class CompanionProfileResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    display_name: str
+    bio: str
+    languages: list[str]
+    service_area: str
+    timezone_name: str
+    identity_document_type: str
+    identity_status: str
+    approval_status: str
+    admin_notes: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AvailabilityInput(BaseModel):
+    weekday: int = Field(ge=0, le=6)
+    start_time: time
+    end_time: time
+
+    @field_validator("end_time")
+    @classmethod
+    def validate_time_range(cls, value: time, info: ValidationInfo) -> time:
+        start_time = info.data.get("start_time")
+        if start_time and value <= start_time:
+            raise ValueError("Availability end time must be after start time")
+        return value
+
+
+class AvailabilityUpdateRequest(BaseModel):
+    availability: list[AvailabilityInput] = Field(max_length=7)
+
+    @field_validator("availability")
+    @classmethod
+    def validate_unique_days(cls, value: list[AvailabilityInput]) -> list[AvailabilityInput]:
+        weekdays = [item.weekday for item in value]
+        if len(weekdays) != len(set(weekdays)):
+            raise ValueError("Only one availability window per weekday is supported")
+        return value
+
+
+class AvailabilityResponse(AvailabilityInput):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+
+
+class CompanionReviewRequest(BaseModel):
+    action: Literal["verify_identity", "reject_identity", "approve", "reject"]
+    notes: Optional[str] = Field(default=None, max_length=1000)
+
+
+class CompanionAdminResponse(CompanionProfileResponse):
+    user_id: str
+    email: EmailStr
+    phone: Optional[str] = None
+
+
+class VisitCreateRequest(BaseModel):
+    parent_id: str
+    scheduled_start: datetime
+    duration_minutes: int = Field(ge=30, le=240, multiple_of=30)
+    requirements: Optional[str] = Field(default=None, max_length=2000)
+
+    @field_validator("scheduled_start")
+    @classmethod
+    def require_future_timezone_aware_time(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("Scheduled start must include a timezone")
+        if value.astimezone(timezone.utc) <= datetime.now(timezone.utc):
+            raise ValueError("Visit must be scheduled in the future")
+        return value.astimezone(timezone.utc)
+
+
+class VisitActionRequest(BaseModel):
+    reason: Optional[str] = Field(default=None, max_length=1000)
+
+
+class VisitAssignmentRequest(BaseModel):
+    companion_id: str
+
+
+class ParentLinkRequest(BaseModel):
+    parent_user_id: str
+
+
+class VisitResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    parent_id: str
+    family_id: str
+    booked_by_user_id: str
+    companion_id: Optional[str] = None
+    scheduled_start: datetime
+    duration_minutes: int
+    requirements: Optional[str] = None
+    status: str
+    rejection_reason: Optional[str] = None
+    cancellation_reason: Optional[str] = None
+    assigned_at: Optional[datetime] = None
+    checked_in_at: Optional[datetime] = None
+    checked_out_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class ParentResponse(ParentProfileBase):

@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     supabase_jwt_secret: str = ""
     supabase_jwt_algorithm: Literal["ES256", "RS256", "HS256", "AUTO"] = "ES256"
     cors_allowed_origins: list[str] = ["http://localhost:3000"]
+    admin_user_ids: list[str] = []
     environment: str = "development"
 
     @field_validator("cors_allowed_origins", mode="before")
@@ -32,6 +33,23 @@ class Settings(BaseSettings):
             return [origin.strip() for origin in stripped.split(",") if origin.strip()]
         if isinstance(value, (list, tuple, set)):
             return [str(origin).strip() for origin in value if str(origin).strip()]
+        return value
+
+    @field_validator("admin_user_ids", mode="before")
+    @classmethod
+    def assemble_admin_user_ids(cls, value: Any) -> list[str]:
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped.startswith("[") and stripped.endswith("]"):
+                try:
+                    parsed = json.loads(stripped)
+                    if isinstance(parsed, list):
+                        return [str(user_id).strip() for user_id in parsed if str(user_id).strip()]
+                except json.JSONDecodeError:
+                    pass
+            return [user_id.strip() for user_id in stripped.split(",") if user_id.strip()]
+        if isinstance(value, (list, tuple, set)):
+            return [str(user_id).strip() for user_id in value if str(user_id).strip()]
         return value
 
     @field_validator("supabase_jwt_algorithm", mode="before")

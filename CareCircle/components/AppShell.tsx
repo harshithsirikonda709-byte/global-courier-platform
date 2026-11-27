@@ -14,7 +14,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       router.replace("/login");
       return;
     }
-    setUser(getStoredUser());
+    Promise.resolve().then(() => setUser(getStoredUser()));
   }, [router]);
 
   function logout() {
@@ -27,8 +27,16 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       <aside className="cc-sidebar" aria-label="Primary navigation">
         <div className="cc-brand">CARE<span>CIRCLE</span></div>
         <nav className="cc-nav">
-          <Link href="/family">Dashboard</Link>
-          <Link href="/family/parents">My Parents</Link>
+          {user?.account_type === "family" ? (
+            <>
+              <Link href="/family">Dashboard</Link>
+              <Link href="/family/parents">My Parents</Link>
+              <Link href="/family/visits">Visits</Link>
+            </>
+          ) : null}
+          {user?.account_type === "companion" ? <Link href="/companion">Companion workspace</Link> : null}
+          {user?.account_type === "parent" ? <Link href="/parent">My preferences and consent</Link> : null}
+          {user?.is_admin ? <Link href="/admin">Admin review</Link> : null}
         </nav>
         <div className="cc-account">
           {user ? (
