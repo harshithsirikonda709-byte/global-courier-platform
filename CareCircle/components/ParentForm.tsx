@@ -15,7 +15,7 @@ function emptyContact() {
     relationship: "",
     phone: "",
     alternate_phone: "",
-    is_primary: true,
+    is_primary: false,
   };
 }
 
@@ -45,7 +45,7 @@ export default function ParentForm({ initial, submittingLabel, onSubmit }: Props
           alternate_phone: contact.alternate_phone ?? "",
           is_primary: contact.is_primary,
         }))
-      : [emptyContact()],
+      : [{ ...emptyContact(), is_primary: true }],
   });
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
