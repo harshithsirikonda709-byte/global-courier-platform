@@ -4,4 +4,11 @@ __pycache__/
 .env
 .venv/
 venv/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+.pytest_cache/
 

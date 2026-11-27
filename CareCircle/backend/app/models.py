@@ -22,7 +22,6 @@ class User(Base):
     email = Column(String(320), unique=True, nullable=False, index=True)
     phone = Column(String(32), unique=True, nullable=True)
     full_name = Column(String(160), nullable=False)
-    password_hash = Column(String(255), nullable=False)
     account_status = Column(String(32), nullable=False, default="active")
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
@@ -124,12 +123,23 @@ class ParentConsent(Base):
 
     id = Column(String, primary_key=True, default=uuid_string)
     parent_id = Column(String, ForeignKey("parent_profiles.id"), nullable=False)
-    status = Column(String(32), nullable=False, default="active")
+    status = Column(
+        String(32),
+        nullable=False,
+        default="family_reported",
+        server_default="family_reported",
+    )
+    consent_source = Column(
+        String(32),
+        nullable=False,
+        default="family_reported",
+        server_default="family_reported",
+    )
     scope = Column(String(160), nullable=False)
     consent_text = Column(Text, nullable=False)
     signed_by_user_id = Column(String, ForeignKey("users.id"), nullable=False)
     signer_relationship = Column(String(80), nullable=True)
-    effective_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    effective_at = Column(DateTime(timezone=True), nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=True)
     withdrawn_at = Column(DateTime(timezone=True), nullable=True)
     withdrawn_by_user_id = Column(String, ForeignKey("users.id"), nullable=True)

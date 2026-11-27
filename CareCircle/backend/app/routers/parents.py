@@ -46,6 +46,8 @@ def require_parent_access(db: Session, current_user: User, parent_id: str) -> Pa
     parent = db.query(ParentProfile).filter(ParentProfile.id == parent_id).first()
     if parent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Parent profile not found")
+    if parent.status != "active":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Parent profile not found")
     if parent_link is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You are not authorized to access this parent")
     return parent
@@ -215,38 +217,56 @@ def record_consent(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    parent = require_parent_access(db, current_user, parent_id)
-    membership = require_family_member(db, current_user)
+    parent = db.query(ParentProfile).filter(ParentProfile.id == parent_id).first()
+    if parent is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Parent profile not found")
 
-    authorization = (
-        db.query(ParentAuthorization)
-        .filter(
-            ParentAuthorization.parent_id == parent_id,
-            ParentAuthorization.family_member_id == membership.id,
-            ParentAuthorization.status == "active",
+    is_parent = parent.parent_user_id == current_user.id
+    if is_parent:
+        consent_source = "parent"
+        signer_relationship = None
+    else:
+        parent = require_parent_access(db, current_user, parent_id)
+        membership = require_family_member(db, current_user)
+        authorization = (
+            db.query(ParentAuthorization)
+            .filter(
+                ParentAuthorization.parent_id == parent_id,
+                ParentAuthorization.family_member_id == membership.id,
+                ParentAuthorization.status == "active",
+            )
+            .first()
         )
-        .first()
-    )
-    if authorization is None or not authorization.can_manage_consent:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Consent management is not authorized")
-
-    active_consents = db.query(ParentConsent).filter(
-        ParentConsent.parent_id == parent_id,
-        ParentConsent.status == "active",
-    ).all()
-    for consent in active_consents:
-        consent.status = "superseded"
+        if authorization is None or not authorization.can_manage_consent:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Consent management is not authorized")
+        consent_source = "family_reported"
+        family_link = db.query(FamilyParent).filter(
+            FamilyParent.parent_id == parent_id,
+            FamilyParent.family_id == membership.family_id,
+            FamilyParent.status == "active",
+        ).first()
+        signer_relationship = family_link.relationship_type if family_link else None
 
     consent = ParentConsent(
         parent_id=parent.id,
-        status="active",
+        status="active" if is_parent else "family_reported",
+        consent_source=consent_source,
         scope=payload.scope,
         consent_text=payload.consent_text,
         signed_by_user_id=current_user.id,
-        signer_relationship=payload.signer_relationship,
-        effective_at=datetime.now(timezone.utc),
+        signer_relationship=signer_relationship,
+        effective_at=datetime.now(timezone.utc) if is_parent else None,
         expires_at=payload.expires_at,
     )
+    if is_parent:
+        active_consents = db.query(ParentConsent).filter(
+            ParentConsent.parent_id == parent.id,
+            ParentConsent.status == "active",
+            ParentConsent.consent_source == "parent",
+        ).all()
+        for active_consent in active_consents:
+            active_consent.status = "superseded"
+
     db.add(consent)
     db.flush()
     audit(db, current_user.id, "record_consent", "parent_consent", consent.id)
@@ -263,20 +283,25 @@ def withdraw_consent(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    parent = require_parent_access(db, current_user, parent_id)
-    membership = require_family_member(db, current_user)
+    parent = db.query(ParentProfile).filter(ParentProfile.id == parent_id).first()
+    if parent is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Parent profile not found")
 
-    authorization = (
-        db.query(ParentAuthorization)
-        .filter(
-            ParentAuthorization.parent_id == parent_id,
-            ParentAuthorization.family_member_id == membership.id,
-            ParentAuthorization.status == "active",
+    is_parent = parent.parent_user_id == current_user.id
+    if not is_parent:
+        require_parent_access(db, current_user, parent_id)
+        membership = require_family_member(db, current_user)
+        authorization = (
+            db.query(ParentAuthorization)
+            .filter(
+                ParentAuthorization.parent_id == parent_id,
+                ParentAuthorization.family_member_id == membership.id,
+                ParentAuthorization.status == "active",
+            )
+            .first()
         )
-        .first()
-    )
-    if authorization is None or not authorization.can_manage_consent:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Consent management is not authorized")
+        if authorization is None or not authorization.can_manage_consent:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Consent management is not authorized")
 
     consent = db.query(ParentConsent).filter(
         ParentConsent.id == consent_id,
@@ -284,8 +309,10 @@ def withdraw_consent(
     ).first()
     if consent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Consent record not found")
-    if consent.status != "active":
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only active consent can be withdrawn")
+    if consent.consent_source == "parent" and not is_parent:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the parent can withdraw personal consent")
+    if consent.status not in ("active", "family_reported"):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only current consent records can be withdrawn")
 
     consent.status = "withdrawn"
     consent.withdrawn_at = datetime.now(timezone.utc)

@@ -16,14 +16,29 @@ export type EmergencyContact = {
 
 export type Consent = {
   id: string;
-  status: "active" | "superseded" | "withdrawn";
+  status: "active" | "family_reported" | "superseded" | "withdrawn";
+  consent_source: "parent" | "family_reported";
   scope: string;
   consent_text: string;
   signer_relationship?: string | null;
-  effective_at: string;
+  effective_at?: string | null;
   expires_at?: string | null;
   withdrawn_at?: string | null;
   withdrawal_reason?: string | null;
+};
+
+export type AuthSession = {
+  access_token: string;
+  refresh_token?: string | null;
+  expires_in?: number | null;
+  user: AuthUser;
+};
+
+export type ConfirmationPending = {
+  confirmation_required: true;
+  message: string;
+  user_id?: string;
+  email: string;
 };
 
 export type ParentProfile = {

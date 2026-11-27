@@ -3,9 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { api, saveAuth, type AuthUser } from "@/lib/api";
-
-type AuthResponse = { access_token: string; user: AuthUser };
+import { api, saveAuth, type AuthSession, type ConfirmationPending } from "@/lib/api";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -14,6 +12,7 @@ export default function RegisterPage() {
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
 
   async function submit(event: React.FormEvent) {
@@ -34,7 +33,7 @@ export default function RegisterPage() {
 
     setLoading(true);
     try {
-      const response = await api<AuthResponse>("/v1/auth/register", {
+      const response = await api<AuthSession | ConfirmationPending>("/v1/auth/register", {
         method: "POST",
         body: JSON.stringify({
           full_name: fullName,
@@ -43,6 +42,10 @@ export default function RegisterPage() {
           password,
         }),
       });
+      if ("confirmation_required" in response) {
+        setNotice(response.message);
+        return;
+      }
       saveAuth(response.access_token, response.user);
       router.replace("/family");
     } catch (requestError) {
@@ -60,6 +63,7 @@ export default function RegisterPage() {
         </div>
         <h1 style={{ marginTop: 0 }}>Create a family account</h1>
         {error ? <div className="cc-alert error" role="alert">{error}</div> : null}
+        {notice ? <div className="cc-alert success" role="status">{notice}</div> : null}
         <div className="cc-field">
           <label htmlFor="fullName">Full name</label>
           <input id="fullName" value={fullName} onChange={(event) => setFullName(event.target.value)} autoComplete="name" />

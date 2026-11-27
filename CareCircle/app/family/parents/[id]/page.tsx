@@ -11,7 +11,7 @@ function ParentDetailContent() {
   const [parent, setParent] = useState<ParentProfile | null>(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-  const [consentText, setConsentText] = useState("I consent to the parent receiving scheduled, non-medical companionship visits.");
+  const [consentText, setConsentText] = useState("The parent told me they agree to scheduled, non-medical companionship visits.");
   const [scope, setScope] = useState("Scheduled companionship visits");
   const [withdrawReason, setWithdrawReason] = useState("");
   const [busy, setBusy] = useState(false);
@@ -43,10 +43,9 @@ function ParentDetailContent() {
         body: JSON.stringify({
           scope,
           consent_text: consentText,
-          signer_relationship: "Authorized family member",
         }),
       });
-      setSuccess("Parent consent recorded.");
+      setSuccess("Your report was recorded. It is not treated as the parent's personal consent.");
       setWithdrawReason("");
       await load();
     } catch (requestError) {
@@ -147,19 +146,24 @@ function ParentDetailContent() {
             </button>
           </>
         ) : (
-          <form onSubmit={recordConsent} noValidate>
+          <>
+            <p className="cc-muted">
+              Family members can record what the parent said, but only the parent&apos;s own authenticated account can grant personal consent.
+            </p>
+            <form onSubmit={recordConsent} noValidate>
             <div className="cc-field">
               <label htmlFor="scope">Consent scope</label>
               <input id="scope" value={scope} onChange={(event) => setScope(event.target.value)} />
             </div>
             <div className="cc-field">
-              <label htmlFor="consentText">Consent statement</label>
+              <label htmlFor="consentText">What did the parent say?</label>
               <textarea id="consentText" value={consentText} onChange={(event) => setConsentText(event.target.value)} />
             </div>
             <button type="submit" className="cc-button" disabled={busy}>
-              {busy ? "Saving..." : "Record consent"}
+              {busy ? "Saving..." : "Record family report"}
             </button>
-          </form>
+            </form>
+          </>
         )}
 
         {parent.consents.length ? (
@@ -168,6 +172,7 @@ function ParentDetailContent() {
             {parent.consents.map((consent) => (
               <div key={consent.id} style={{ borderTop: "1px solid #e5e9f2", padding: "12px 0" }}>
                 <span className={`cc-status ${consent.status === "withdrawn" ? "withdrawn" : ""}`}>{consent.status}</span>
+                <span className="cc-muted"> · {consent.consent_source === "parent" ? "Parent-authenticated" : "Family report; not personal consent"}</span>
                 <p style={{ marginBottom: 4 }}>{consent.scope}</p>
                 {consent.withdrawal_reason ? <p className="cc-muted">Withdrawal: {consent.withdrawal_reason}</p> : null}
               </div>

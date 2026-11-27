@@ -36,7 +36,16 @@ class UserResponse(BaseModel):
 class AuthResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    refresh_token: Optional[str] = None
+    expires_in: Optional[int] = None
     user: UserResponse
+
+
+class ConfirmationPending(BaseModel):
+    confirmation_required: bool = True
+    message: str
+    user_id: Optional[str] = None
+    email: EmailStr
 
 
 class EmergencyContactInput(BaseModel):
@@ -115,7 +124,6 @@ class EmergencyContactResponse(EmergencyContactInput):
 class ConsentCreateRequest(BaseModel):
     consent_text: str = Field(min_length=10, max_length=4000)
     scope: str = Field(min_length=3, max_length=160)
-    signer_relationship: Optional[str] = Field(default=None, max_length=80)
     expires_at: Optional[datetime] = None
 
 
@@ -124,10 +132,11 @@ class ConsentResponse(BaseModel):
 
     id: str
     status: str
+    consent_source: str
     scope: str
     consent_text: str
     signer_relationship: Optional[str] = None
-    effective_at: datetime
+    effective_at: Optional[datetime] = None
     expires_at: Optional[datetime] = None
     withdrawn_at: Optional[datetime] = None
     withdrawal_reason: Optional[str] = None
