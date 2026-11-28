@@ -91,6 +91,90 @@ class SupabaseClient:
             raise SupabaseError("Failed to cancel booking")
         return result if isinstance(result, dict) else result[0]
 
+    # Day 4: Administrative and Driver Operations
+    async def list_all_bookings(
+        self, access_token: str, status: str | None = None, driver_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        path = "/rest/v1/bookings?select=*&order=created_at.desc"
+        if status:
+            path += f"&status=eq.{status}"
+        if driver_id:
+            path += f"&assigned_driver_id=eq.{driver_id}"
+        rows = await self._request("GET", path, None, access_token)
+        return rows or []
+
+    async def list_driver_bookings(
+        self, access_token: str, driver_id: str, status: str | None = None
+    ) -> list[dict[str, Any]]:
+        path = f"/rest/v1/bookings?assigned_driver_id=eq.{driver_id}&select=*&order=created_at.desc"
+        if status:
+            path += f"&status=eq.{status}"
+        rows = await self._request("GET", path, None, access_token)
+        return rows or []
+
+    async def get_booking_admin(self, access_token: str, booking_id: str) -> dict[str, Any] | None:
+        rows = await self._request("GET", f"/rest/v1/bookings?id=eq.{booking_id}&select=*", None, access_token)
+        return rows[0] if rows else None
+
+    async def assign_pickup_executive(
+        self, access_token: str, booking_id: str, driver_id: str
+    ) -> dict[str, Any]:
+        result = await self._request(
+            "POST",
+            "/rest/v1/rpc/assign_pickup_executive",
+            {"p_booking_id": booking_id, "p_driver_id": driver_id},
+            access_token,
+        )
+        if not result:
+            raise SupabaseError("Failed to assign pickup executive")
+        return result if isinstance(result, dict) else result[0]
+
+    async def inspect_parcel_and_pickup(
+        self,
+        access_token: str,
+        booking_id: str,
+        driver_id: str,
+        actual_weight: float,
+        actual_length: float,
+        actual_width: float,
+        actual_height: float,
+        packaging_status: str,
+        final_price: float,
+        special_instructions: str | None = None,
+    ) -> dict[str, Any]:
+        result = await self._request(
+            "POST",
+            "/rest/v1/rpc/inspect_parcel_and_pickup",
+            {
+                "p_booking_id": booking_id,
+                "p_driver_id": driver_id,
+                "p_actual_weight": actual_weight,
+                "p_actual_length": actual_length,
+                "p_actual_width": actual_width,
+                "p_actual_height": actual_height,
+                "p_packaging_status": packaging_status,
+                "p_final_price": final_price,
+                "p_special_instructions": special_instructions,
+            },
+            access_token,
+        )
+        if not result:
+            raise SupabaseError("Failed to record parcel inspection")
+        return result if isinstance(result, dict) else result[0]
+
+    async def update_booking_workflow_status(
+        self, access_token: str, booking_id: str, driver_id: str, new_status: str
+    ) -> dict[str, Any]:
+        result = await self._request(
+            "POST",
+            "/rest/v1/rpc/update_booking_workflow_status",
+            {"p_booking_id": booking_id, "p_driver_id": driver_id, "p_new_status": new_status},
+            access_token,
+        )
+        if not result:
+            raise SupabaseError("Failed to update booking status")
+        return result if isinstance(result, dict) else result[0]
+
     # Common request executor
     async def _request(
         self,

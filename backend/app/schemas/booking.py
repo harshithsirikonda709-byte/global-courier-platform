@@ -97,3 +97,57 @@ class BookingCancelResponse(BaseModel):
     tracking_number: str
     status: BookingStatus = BookingStatus.CANCELLED
     message: str = "Booking cancelled successfully"
+
+
+class PackagingStatus(str, Enum):
+    ORIGINAL = "ORIGINAL"
+    REPACKAGED = "REPACKAGED"
+    CUSTOM_CRATING = "CUSTOM_CRATING"
+    DAMAGED = "DAMAGED"
+
+
+class PickupAssignRequest(BaseModel):
+    driver_id: str = Field(min_length=36, max_length=36, description="UUID of the assigned pickup executive")
+
+
+class PickupAssignResponse(BaseModel):
+    id: str
+    tracking_number: str
+    status: BookingStatus
+    assigned_driver_id: str
+    message: str = "Pickup executive assigned successfully"
+
+
+class ParcelInspectRequest(BaseModel):
+    actual_weight_kg: float = Field(gt=0, le=1000, description="Inspected dead weight in kilograms")
+    actual_length_cm: float = Field(gt=0, le=500, description="Inspected length in centimeters")
+    actual_width_cm: float = Field(gt=0, le=500, description="Inspected width in centimeters")
+    actual_height_cm: float = Field(gt=0, le=500, description="Inspected height in centimeters")
+    packaging_status: PackagingStatus = Field(description="Packaging status determined during inspection")
+    special_instructions: str | None = Field(default=None, max_length=1000, description="Updated handling instructions")
+
+
+class ParcelInspectResponse(BaseModel):
+    id: str
+    tracking_number: str
+    status: BookingStatus
+    actual_weight_kg: float
+    actual_length_cm: float
+    actual_width_cm: float
+    actual_height_cm: float
+    packaging_status: str
+    final_price: float
+    message: str = "Parcel inspection completed and final price computed successfully"
+
+
+class BookingStatusUpdateRequest(BaseModel):
+    status: BookingStatus = Field(description="Target booking status")
+    notes: str | None = Field(default=None, max_length=500, description="Status update or delivery notes")
+
+
+class BookingStatusUpdateResponse(BaseModel):
+    id: str
+    tracking_number: str
+    status: BookingStatus
+    updated_at: datetime
+    message: str = "Booking status updated successfully"

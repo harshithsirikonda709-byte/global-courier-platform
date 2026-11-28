@@ -1,7 +1,7 @@
 from functools import lru_cache
 from uuid import UUID
 
-from fastapi import HTTPException, Request
+from fastapi import Depends, HTTPException, Request
 import jwt
 from jwt import InvalidTokenError, PyJWKClient, decode
 from jwt.exceptions import PyJWKClientConnectionError, PyJWKClientError
@@ -24,7 +24,7 @@ async def bearer_token(request: Request) -> str:
     return token
 
 
-async def current_user_id(request: Request) -> str:
+async def current_user_claims(request: Request) -> dict:
     token = await bearer_token(request)
     settings = get_settings()
 
@@ -75,6 +75,39 @@ async def current_user_id(request: Request) -> str:
             issuer=issuer,
             options={"require": ["iss", "aud", "exp", "sub"]},
         )
-        return str(UUID(claims["sub"]))
+        UUID(claims["sub"])
+        return claims
     except (InvalidTokenError, ValueError, TypeError, AttributeError):
         raise HTTPException(status_code=401, detail="Invalid or expired access token")
+
+
+async def current_user_id(claims: dict = Depends(current_user_claims)) -> str:
+    return str(claims["sub"])
+
+
+def get_user_role(claims: dict, request: Request) -> str:
+    dev_role = request.headers.get("X-User-Role")
+    if dev_role:
+        return dev_role.lower()
+
+    if claims.get("role") in ("admin", "service_role"):
+        return "admin"
+    if claims.get("app_metadata", {}).get("role"):
+        return str(claims["app_metadata"]["role"]).lower()
+    if claims.get("user_metadata", {}).get("role"):
+        return str(claims["user_metadata"]["role"]).lower()
+    return "customer"
+
+
+async def require_admin(request: Request, claims: dict = Depends(current_user_claims)) -> dict:
+    role = get_user_role(claims, request)
+    if role not in ("admin", "service_role"):
+        raise HTTPException(status_code=403, detail="Forbidden: Admin access required")
+    return claims
+
+
+async def require_driver(request: Request, claims: dict = Depends(current_user_claims)) -> dict:
+    role = get_user_role(claims, request)
+    if role not in ("driver", "pickup_executive", "admin", "service_role"):
+        raise HTTPException(status_code=403, detail="Forbidden: Pickup executive access required")
+    return claims

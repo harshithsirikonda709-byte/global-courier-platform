@@ -17,6 +17,7 @@ from app.schemas.booking import (
     PickupDetails,
     ReceiverDetails,
 )
+from app.services.pricing import calculate_pricing
 from app.services.supabase import SupabaseClient, SupabaseError
 
 router = APIRouter(prefix="/bookings", tags=["Courier Bookings"])
@@ -60,6 +61,15 @@ def to_db_record(data: BookingCreateRequest, customer_id: str, tracking_number: 
         "width_cm": data.parcel.width_cm,
         "height_cm": data.parcel.height_cm,
         "estimated_weight_kg": data.parcel.estimated_weight_kg,
+        "estimated_price": calculate_pricing(
+            weight_kg=data.parcel.estimated_weight_kg,
+            length_cm=data.parcel.length_cm,
+            width_cm=data.parcel.width_cm,
+            height_cm=data.parcel.height_cm,
+            category=data.parcel.category,
+            pickup_state=data.pickup.state,
+            receiver_state=data.receiver.state,
+        ).total_price,
         "special_instructions": data.special_instructions,
     }
 
