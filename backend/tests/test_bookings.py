@@ -186,15 +186,23 @@ class BookingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_cancel_booking_success(self):
         # 1st call for get_booking -> returns PENDING_PICKUP row
-        # 2nd call for update_booking -> returns CANCELLED row
+        # 2nd call for cancel_customer_booking RPC -> returns CANCELLED row
         cancelled_row = {**self.db_booking_row, "status": "CANCELLED"}
-        self.request.side_effect = [[self.db_booking_row], [cancelled_row]]
+        self.request.side_effect = [[self.db_booking_row], cancelled_row]
 
         response = await self.client.post(f"/api/v1/bookings/{self.booking_id}/cancel", headers=self.headers_a)
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(data["status"], "CANCELLED")
         self.assertEqual(data["id"], self.booking_id)
+
+        # Verify that cancellation called the secure RPC endpoint rather than a direct table PATCH
+        called_method = self.request.call_args_list[-1][0][0]
+        called_path = self.request.call_args_list[-1][0][1]
+        called_body = self.request.call_args_list[-1][0][2]
+        self.assertEqual(called_method, "POST")
+        self.assertEqual(called_path, "/rest/v1/rpc/cancel_customer_booking")
+        self.assertEqual(called_body, {"booking_id": self.booking_id})
 
     async def test_cancel_booking_already_in_transit(self):
         in_transit_row = {**self.db_booking_row, "status": "IN_TRANSIT"}
@@ -203,6 +211,14 @@ class BookingTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.post(f"/api/v1/bookings/{self.booking_id}/cancel", headers=self.headers_a)
         self.assertEqual(response.status_code, 400)
         self.assertIn("Cannot cancel booking", response.json()["detail"])
+
+    async def test_cancel_booking_rpc_supabase_error(self):
+        from app.services.supabase import SupabaseError
+
+        self.request.side_effect = [[self.db_booking_row], SupabaseError("RPC execution failed")]
+        response = await self.client.post(f"/api/v1/bookings/{self.booking_id}/cancel", headers=self.headers_a)
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("Failed to cancel booking", response.json()["detail"])
 
     async def test_customer_cannot_access_other_customer_booking(self):
         """Customer B cannot view or cancel Customer A's booking."""

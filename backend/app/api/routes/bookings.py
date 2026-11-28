@@ -171,7 +171,7 @@ async def cancel_booking(
     user_id: str = Depends(current_user_id),
     token: str = Depends(bearer_token),
 ) -> BookingCancelResponse:
-    """Cancel a booking if it is still pending pickup."""
+    """Cancel a booking if it is still pending pickup using secure database RPC."""
     client = SupabaseClient(get_settings())
     try:
         row = await client.get_booking(token, booking_id, user_id)
@@ -185,17 +185,14 @@ async def cancel_booking(
                 detail=f"Cannot cancel booking with status '{current_status}'. Only '{BookingStatus.PENDING_PICKUP.value}' bookings can be cancelled.",
             )
 
-        updated_row = await client.update_booking(
-            token, booking_id, user_id, {"status": BookingStatus.CANCELLED.value, "updated_at": datetime.now(timezone.utc).isoformat()}
-        )
-        if not updated_row:
-            raise HTTPException(status_code=502, detail="Failed to update booking status")
-
+        updated_row = await client.cancel_customer_booking(token, booking_id)
         return BookingCancelResponse(
             id=str(updated_row["id"]),
             tracking_number=updated_row["tracking_number"],
             status=BookingStatus.CANCELLED,
             message="Booking cancelled successfully",
         )
+    except HTTPException:
+        raise
     except SupabaseError as exc:
         raise HTTPException(status_code=502, detail=f"Failed to cancel booking: {exc}")

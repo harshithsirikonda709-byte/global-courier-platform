@@ -80,6 +80,17 @@ class SupabaseClient:
         )
         return rows[0] if rows else None
 
+    async def cancel_customer_booking(self, access_token: str, booking_id: str) -> dict[str, Any]:
+        result = await self._request(
+            "POST",
+            "/rest/v1/rpc/cancel_customer_booking",
+            {"booking_id": booking_id},
+            access_token,
+        )
+        if not result:
+            raise SupabaseError("Failed to cancel booking")
+        return result if isinstance(result, dict) else result[0]
+
     # Common request executor
     async def _request(
         self,

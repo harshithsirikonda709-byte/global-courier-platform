@@ -43,7 +43,7 @@ create table if not exists public.bookings (
   height_cm numeric(8, 2) not null check (height_cm > 0),
   estimated_weight_kg numeric(8, 2) not null check (estimated_weight_kg > 0),
 
-  -- Pickup assignment, inspection and pricing (Day 4 fields)
+  -- Pickup assignment, inspection and pricing (Day 4 fields - administrative & driver operations)
   assigned_driver_id uuid references auth.users(id) on delete set null,
   actual_weight_kg numeric(8, 2) check (actual_weight_kg is null or actual_weight_kg > 0),
   actual_length_cm numeric(8, 2) check (actual_length_cm is null or actual_length_cm > 0),
@@ -70,6 +70,50 @@ create index if not exists idx_bookings_created_at on public.bookings(created_at
 -- Enable Row Level Security
 alter table public.bookings enable row level security;
 
+-- Auto-update updated_at timestamp on row changes
+create or replace function public.handle_booking_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists set_booking_updated_at on public.bookings;
+create trigger set_booking_updated_at
+  before update on public.bookings
+  for each row
+  execute function public.handle_booking_updated_at();
+
+-- RPC Function for customer booking cancellation
+-- Customers are not permitted to directly modify the status column.
+-- Cancellation is handled safely via this SECURITY DEFINER function.
+create or replace function public.cancel_customer_booking(booking_id uuid)
+returns public.bookings
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_booking public.bookings;
+begin
+  update public.bookings
+  set status = 'CANCELLED'
+  where id = booking_id
+    and customer_id = auth.uid()
+    and status = 'PENDING_PICKUP'
+  returning * into v_booking;
+
+  if not found then
+    raise exception 'Booking not found or cannot be cancelled in its current status';
+  end if;
+
+  return v_booking;
+end;
+$$;
+
 -- RLS Policies
 drop policy if exists "Customers view their own bookings" on public.bookings;
 drop policy if exists "Customers create their own bookings" on public.bookings;
@@ -87,8 +131,46 @@ create policy "Customers create their own bookings" on public.bookings
 create policy "Customers update their own bookings" on public.bookings
   for update to authenticated using (auth.uid() = customer_id) with check (auth.uid() = customer_id);
 
--- Access grants
-revoke all on public.bookings from public, anon;
-grant select, insert, update on public.bookings to authenticated;
+-- Access grants:
+-- Revoke all permissions from public and anon
+revoke all on public.bookings from public, anon, authenticated;
+
+-- Customers can view and insert their own bookings
+grant select, insert on public.bookings to authenticated;
+
+-- Customers can ONLY update permitted non-sensitive fields.
+-- Sensitive fields (status, assigned_driver_id, actual_weight_kg, actual_length_cm, actual_width_cm,
+-- actual_height_cm, packaging_status, estimated_price, final_price, parcel_category, created_at, updated_at)
+-- CANNOT be modified by customers directly.
+grant update (
+  pickup_name,
+  pickup_phone,
+  pickup_address_line_1,
+  pickup_address_line_2,
+  pickup_city,
+  pickup_state,
+  pickup_postal_code,
+  pickup_country,
+  pickup_date,
+  pickup_time_slot,
+  receiver_name,
+  receiver_phone,
+  receiver_email,
+  receiver_address_line_1,
+  receiver_address_line_2,
+  receiver_city,
+  receiver_state,
+  receiver_postal_code,
+  receiver_country,
+  parcel_description,
+  special_instructions
+) on public.bookings to authenticated;
+
+-- Grant execution of cancel RPC to authenticated users
+grant execute on function public.cancel_customer_booking(uuid) to authenticated;
+
+-- Grant full operational privileges to service_role (for backend administrative & pickup executive tasks)
+grant all on public.bookings to service_role;
+grant execute on function public.cancel_customer_booking(uuid) to service_role;
 
 commit;
